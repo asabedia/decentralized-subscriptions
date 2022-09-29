@@ -74,7 +74,7 @@ contract Subscribe {
         uint availableAmount = sub.stakedAmount - periodCost * pCount;
         require(availableAmount > 0, "No funds available to withdraw.");
         delete subscribers[subscriberAddress];
-        (bool sent, bytes memory data) = payable(subscriberAddress).call{value: availableAmount}("");
+        (bool sent, bytes memory data) = payable(subscriberAddress).call{value : availableAmount}("");
         require(sent, "Failed to send.");
     }
 
@@ -90,23 +90,4 @@ contract Subscribe {
         uint availableAmount = sub.stakedAmount - periodCost * pCount;
         return availableAmount;
     }
-    //
-    //    function withdraw() public {}
-    //
-    //    function isSubscribed() public view returns (bool) {
-    //        return false;
-    //    }
-
-    //
-    //    function withdraw() public {
-    //        // Uncomment this line to print a log in your terminal
-    //        // console.log("Unlock time is %o and block timestamp is %o", unlockTime, block.timestamp);
-    //
-    //        require(block.timestamp >= unlockTime, "You can't withdraw yet");
-    //        require(msg.sender == owner, "You aren't the owner");
-    //
-    //        emit Withdrawal(address(this).balance, block.timestamp);
-    //
-    //        owner.transfer(address(this).balance);
-    //    }
 }
