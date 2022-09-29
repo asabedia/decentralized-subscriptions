@@ -9,3 +9,5 @@ typechain-types
 cache
 artifacts
 
+# Default ignored files
+/.idea
