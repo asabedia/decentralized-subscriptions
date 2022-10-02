@@ -8,19 +8,23 @@ describe('Subscribe Contract', () => {
     const ONE_WEEK = 0
     const TWO_WEEKS = 1
     const THIRTY_DAYS = 2
+    const ONE_DAY_SECONDS = 86400
 
     async function latestBlock() {
         return await ethers.provider.getBlock("latest");
     }
 
-    async function nextBlockTimestamp() {
+    async function nextBlockTimestamp(incremental_seconds) {
+        if (incremental_seconds === undefined) {
+            incremental_seconds = 60;
+        }
         return await latestBlock().then((block) => {
-            return block.timestamp + 60
+            return block.timestamp + incremental_seconds
         });
     }
 
-    async function setNextBlockTimestamp() {
-        let timestamp = await nextBlockTimestamp();
+    async function incrementAndGetNextBlockTimestamp(incremental_seconds) {
+        let timestamp = await nextBlockTimestamp(incremental_seconds);
         await ethers.provider.send("evm_setNextBlockTimestamp", [timestamp]);
         return timestamp;
     }
@@ -45,28 +49,48 @@ describe('Subscribe Contract', () => {
         });
     });
     describe('Create Subscription', () => {
-        it('subscribing for the first time with one period worth of funds', async () => {
-            let timestamp = await setNextBlockTimestamp();
-            await expect(subscribe.createSubscription({value: ONE_SUB_PERIOD_COST}))
-                .to.emit(subscribe, 'Subscribed')
-                .withArgs(owner.address, ONE_SUB_PERIOD_COST, timestamp);
-            expect(await subscribe.balanceOf()).to.equal(ONE_SUB_PERIOD_COST);
-            expect(await ethers.provider.getBalance(subscribe.address)).to.equal(ONE_SUB_PERIOD_COST);
-        });
-
-        it('subscribing for the second time with one period worth of funds', async () => {
-            await subscribe.createSubscription({value: ONE_SUB_PERIOD_COST});
-            expect(subscribe.createSubscription({value: ONE_SUB_PERIOD_COST})).to.revertedWith("Already subscribed.");
-        });
-
         it('subscribing with amount less than one period cost', async () => {
             expect(subscribe.createSubscription({value: ONE_SUB_PERIOD_COST - 200})).to.revertedWith("Not enough to complete subscription.");
         });
 
-        it('subscribing with amount equal to a subscription period costs and half', async () => {
-            let deposit = ONE_SUB_PERIOD_COST + ONE_SUB_PERIOD_COST / 2
-            await subscribe.createSubscription({value: deposit})
-            expect(await subscribe.balanceOf()).to.equal(deposit)
+        it('subscribing for the the first time', async () => {
+            let timestamp = await incrementAndGetNextBlockTimestamp();
+            await expect(subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST}))
+                .to.emit(subscribe, 'Subscribed')
+                .withArgs(addr1.address, ONE_SUB_PERIOD_COST, timestamp);
+            expect(await subscribe.isSubscribed(addr1.address)).eq(true)
+            expect(await subscribe.connect(addr1).stakedAmount()).to.equal(ONE_SUB_PERIOD_COST);
+            expect(await ethers.provider.getBalance(subscribe.address)).to.equal(ONE_SUB_PERIOD_COST);
+        });
+
+        it('try to subscribe while already subscribed with available balance > period cost', async () => {
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST * 3});
+            let timestamp = await incrementAndGetNextBlockTimestamp();
+            await subscribe.connect(addr2).createSubscription({value: ONE_SUB_PERIOD_COST * 3});
+            expect(subscribe.createSubscription({value: ONE_SUB_PERIOD_COST})).to.revertedWith("Already subscribed.");
+        });
+
+        it('try to subscribe while already subscribed with available balance < period cost', async () => {
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST + ONE_SUB_PERIOD_COST / 2});
+            expect(await subscribe.isSubscribed(addr1.address)).eq(true)
+            expect(subscribe.createSubscription({value: ONE_SUB_PERIOD_COST})).to.revertedWith("Already subscribed.");
+        });
+
+        it('try to subscribe while already subscribed with available balance = period cost', async () => {
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST * 2});
+            expect(await subscribe.isSubscribed(addr1.address)).eq(true)
+            expect(subscribe.createSubscription({value: ONE_SUB_PERIOD_COST})).to.revertedWith("Already subscribed.");
+        });
+
+        it('Not subscribed, but was previously subscribed and ended', async () => {
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let timestamp = await incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS * 8);
+            await subscribe.connect(addr2).createSubscription({value: ONE_SUB_PERIOD_COST});
+            expect(await subscribe.isSubscribed(addr1.address)).eq(false)
+            timestamp = await incrementAndGetNextBlockTimestamp(1);
+            await expect(subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST}))
+                .to.emit(subscribe, 'Subscribed')
+                .withArgs(addr1.address, ONE_SUB_PERIOD_COST, timestamp);
         });
     });
 
@@ -74,7 +98,7 @@ describe('Subscribe Contract', () => {
         it('increase subscription with one period worth of funds', async () => {
             await subscribe.createSubscription({value: ONE_SUB_PERIOD_COST});
             await subscribe.increaseSubscription({value: ONE_SUB_PERIOD_COST});
-            expect(await subscribe.balanceOf()).to.equal(ONE_SUB_PERIOD_COST * 2)
+            expect(await subscribe.stakedAmount()).to.equal(ONE_SUB_PERIOD_COST * 2)
         });
 
         it('fail to increase subscription with less than one period worth of funds', async () => {
@@ -88,13 +112,26 @@ describe('Subscribe Contract', () => {
             let increaseAmount = ONE_SUB_PERIOD_COST + ONE_SUB_PERIOD_COST / 2;
             await subscribe.createSubscription({value: ONE_SUB_PERIOD_COST});
             await subscribe.increaseSubscription({value: increaseAmount});
-            expect(await subscribe.balanceOf()).to.equal(increaseAmount + ONE_SUB_PERIOD_COST)
+            expect(await subscribe.stakedAmount()).to.equal(increaseAmount + ONE_SUB_PERIOD_COST)
+        });
+
+        it('Not subscribed anymore, trying to increase subscription', async () => {
+            let increaseAmount = ONE_SUB_PERIOD_COST;
+            await subscribe.createSubscription({value: ONE_SUB_PERIOD_COST});
+            let timestamp = incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS*7);
+            expect(subscribe.increaseSubscription({value: increaseAmount})).to.revertedWith("Not subscribed.");
         });
     });
 
     describe('Withdraw All', () => {
-        it('can withdraw funds that are not yet consumed (one extra)', async () => {
-            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST * 2});
+
+        it('Subscribed, in period, remaining balance = 0', async () => {
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST});
+            expect(subscribe.connect(addr1).withdrawAll()).to.revertedWith("No funds available to withdraw.");
+        });
+
+        it('Subscribed, in period, remaining balance = 1 period', async () => {
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST*2});
             let balanceBefore = await ethers.provider.getBalance(addr1.address);
             let resp = await subscribe.connect(addr1).withdrawAll();
             let receipt = await resp.wait();
@@ -103,24 +140,37 @@ describe('Subscribe Contract', () => {
             expect(balanceAfter.add(gas).sub(balanceBefore)).eq(ONE_SUB_PERIOD_COST);
         });
 
-        it('can withdraw funds that are not yet consumed (two extra periods)', async () => {
-            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST * 3});
+        it('Subscribed, in period, 0 < remaining balance < 1 period', async () => {
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST + ONE_SUB_PERIOD_COST/2});
             let balanceBefore = await ethers.provider.getBalance(addr1.address);
             let resp = await subscribe.connect(addr1).withdrawAll();
             let receipt = await resp.wait();
             let gas = receipt.gasUsed.mul(receipt.effectiveGasPrice);
             let balanceAfter = await ethers.provider.getBalance(addr1.address);
-            expect(balanceAfter.add(gas).sub(balanceBefore)).eq(ONE_SUB_PERIOD_COST * 2);
+            expect(balanceAfter.add(gas).sub(balanceBefore)).eq(ONE_SUB_PERIOD_COST/2);
         });
 
-        it('can withdraw funds that are not yet consumed (not enough for another period)', async () => {
-            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST + ONE_SUB_PERIOD_COST / 2});
-            let balanceBefore = await ethers.provider.getBalance(addr1.address);
-            let resp = await subscribe.connect(addr1).withdrawAll();
-            let receipt = await resp.wait();
-            let gas = receipt.gasUsed.mul(receipt.effectiveGasPrice);
-            let balanceAfter = await ethers.provider.getBalance(addr1.address);
-            expect(balanceAfter.add(gas).sub(balanceBefore)).eq(ONE_SUB_PERIOD_COST / 2);
+        it('Subscribed, start of the next period, cost is locked', async () => {
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST * 2});
+            let timestamp = await incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS * 7);
+            expect(subscribe.connect(addr1).withdrawAll()).to.revertedWith("No funds available to withdraw.");
+        });
+
+        it('Subscribed, withraw all, still subscribed until the end of the period', async () => {
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST * 3});
+            let timestamp = await incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS * 6);
+            await expect(subscribe.connect(addr1).withdrawAll())
+                .to.emit(subscribe, 'Withdrawal')
+                .withArgs(addr1.address, ONE_SUB_PERIOD_COST*2, timestamp);
+
+            // Still subscribed until the end of the period
+            expect(await subscribe.isSubscribed(addr1.address)).eq(true);
+            expect(await subscribe.connect(addr1).availableBalance()).eq(0);
+
+            // After period ends, no longer subscribed
+            timestamp = await incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS * 2);
+            await subscribe.connect(addr2).createSubscription({value: ONE_SUB_PERIOD_COST});
+            expect(await subscribe.isSubscribed(addr1.address)).eq(false);
         });
     });
 
@@ -138,6 +188,37 @@ describe('Subscribe Contract', () => {
         it('has available no balance', async () => {
             await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST});
             expect(await subscribe.connect(addr1).availableBalance()).eq(0);
+        });
+    });
+
+    describe('Get Deposit Timestamp', () => {
+        it('get subscriber deposit timestamp with this sender address', async () => {
+            let timestamp = await incrementAndGetNextBlockTimestamp();
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST});
+            expect(await subscribe.connect(addr1).depositTimestamp()).eq(timestamp);
+        });
+
+        it('fail to get subscriber deposit timestamp when no subscriber', async () => {
+            let timestamp = await incrementAndGetNextBlockTimestamp();
+            expect(await subscribe.connect(addr1).depositTimestamp()).eq(0);
+        });
+    });
+
+    describe('Is Subscribed', () => {
+        it('(7 day period) still subscribed on day 7', async () => {
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let timestamp = await incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS * 7 - 1);
+            await subscribe.connect(addr2).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let isSubscribed = await subscribe.isSubscribed(addr1.address);
+            expect(isSubscribed).eq(true);
+        });
+
+        it('(7 day period) not subscribed on day 8', async () => {
+            await subscribe.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let timestamp = await incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS * 7);
+            await subscribe.connect(addr2).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let isSubscribed = await subscribe.isSubscribed(addr1.address);
+            expect(isSubscribed).eq(false);
         });
     });
 });
