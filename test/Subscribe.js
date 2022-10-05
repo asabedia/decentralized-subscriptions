@@ -32,6 +32,8 @@ describe('Subscribe Contract', () => {
     beforeEach(async () => {
         Subscribe = await ethers.getContractFactory('Subscribe');
         subscribe = await Subscribe.deploy(0, ONE_SUB_PERIOD_COST);
+        subscribe_14 = await Subscribe.deploy(1, ONE_SUB_PERIOD_COST);
+        subscribe_30 = await Subscribe.deploy(2, ONE_SUB_PERIOD_COST);
         [owner, addr1, addr2, _] = await ethers.getSigners()
     });
 
@@ -218,6 +220,38 @@ describe('Subscribe Contract', () => {
             let timestamp = await incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS * 7);
             await subscribe.connect(addr2).createSubscription({value: ONE_SUB_PERIOD_COST});
             let isSubscribed = await subscribe.isSubscribed(addr1.address);
+            expect(isSubscribed).eq(false);
+        });
+
+        it('(14 day period) still subscribed on day 14', async () => {
+            await subscribe_14.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let timestamp = await incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS * 14 - 1);
+            await subscribe_14.connect(addr2).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let isSubscribed = await subscribe_14.isSubscribed(addr1.address);
+            expect(isSubscribed).eq(true);
+        });
+
+        it('(14 day period) not subscribed on day 15', async () => {
+            await subscribe_14.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let timestamp = await incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS * 14);
+            await subscribe_14.connect(addr2).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let isSubscribed = await subscribe_14.isSubscribed(addr1.address);
+            expect(isSubscribed).eq(false);
+        });
+
+        it('(30 day period) still subscribed on day 30', async () => {
+            await subscribe_30.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let timestamp = await incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS * 30 - 1);
+            await subscribe_30.connect(addr2).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let isSubscribed = await subscribe_30.isSubscribed(addr1.address);
+            expect(isSubscribed).eq(true);
+        });
+
+        it('(30 day period) not subscribed on day 31', async () => {
+            await subscribe_30.connect(addr1).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let timestamp = await incrementAndGetNextBlockTimestamp(ONE_DAY_SECONDS * 30);
+            await subscribe_30.connect(addr2).createSubscription({value: ONE_SUB_PERIOD_COST});
+            let isSubscribed = await subscribe_30.isSubscribed(addr1.address);
             expect(isSubscribed).eq(false);
         });
     });
