@@ -11,7 +11,7 @@ with 5 GWEI. When calling the `isSubscribed` function, the user will now
 be subscribed.
 
 After one period (7 days in this case), the user calls `withdrawAll` and will receive
-the remaining `unspent` amount which will be equal to 4  GWEI. 1 GWEI is `spent`
+the remaining `unspent` amount which will be equal to 3 GWEI. 1 GWEI is `spent`
 at subscription, 1 GWEI is spent at the beginning of the next period (end of day 7).
 
 If the user wishes to prolong the subscription and increase their deposit, they can do so
